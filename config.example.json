@@ -1,0 +1,92 @@
+{
+  "cameras": [
+    {
+      "id": "cam1",
+      "label": "CAM1 front door",
+      "url": "rtsp://192.168.1.101:554/Streaming/Channels/101",
+      "username": "admin",
+      "password": "secret",
+      "transport": "tcp",
+      "latency": {}
+    },
+    {
+      "id": "cam2",
+      "label": "CAM2 driveway / driveway cam (udp transport example)",
+      "url": "rtsp://192.168.1.102:554/live/stream1",
+      "username": "user",
+      "password": "pass",
+      "transport": "udp",
+      "latency": { "wallclock_ts": false }
+    },
+    {
+      "id": "cam3",
+      "label": "CAM3 porch",
+      "url": "rtsp://192.168.1.103:554/Streaming/Channels/101",
+      "username": "admin",
+      "password": "secret"
+    },
+    {
+      "id": "cam4",
+      "label": "CAM4 kitchen",
+      "url": "rtsp://192.168.1.104:554/Streaming/Channels/101",
+      "username": "admin",
+      "password": "secret"
+    }
+  ],
+
+  "monitors": [
+    { "id": "rdp-0" },
+    { "id": "rdp-2" }
+  ],
+
+  "windows": [
+    {
+      "id": "main",
+      "monitor": "rdp-0",
+      "layout": "full",
+      "panes": [ { "camera": "cam1" } ]
+    },
+    {
+      "id": "quad",
+      "monitor": "rdp-2",
+      "layout": "split",
+      "rows": 2,
+      "cols": 2,
+      "gap": 10,
+      "panes": [
+        { "id": "cam1-mirror", "camera": "cam1" },
+        { "camera": "cam2" },
+        { "camera": "cam3" },
+        { "camera": "cam4" }
+      ]
+    }
+  ],
+
+  "latency": {
+    "rtsp_transport": "tcp",
+    "connect_timeout_ms": 1000,
+    "io_timeout_ms": 15000,
+    "keepalive": false,
+    "wallclock_ts": true,
+    "probesize": 32768,
+    "analyzeduration": 0,
+    "thread_type": "slice",
+    "framedrop": true,
+    "hardware_decoders": ["auto"]
+  },
+
+  "placement": {
+    "verify": true,
+    "use_xdotool": true,
+    "max_drift_px": 24,
+    "alwaysontop": false,
+    "override_redirect": false
+  },
+
+  "labels": true,
+  "start_stagger_s": 0.15,
+  "log_dir": "logs",
+  "log_max_mb": 5,
+  "verbose": false,
+  "env": {}
+}

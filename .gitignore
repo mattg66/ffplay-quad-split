@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# Runtime artifacts (per-pane ffplay logs + label files)
+logs/
+
+# Local camera config (real credentials)
+config.json

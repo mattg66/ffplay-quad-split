@@ -1,0 +1,20 @@
+{
+  "cameras": [
+    { "id": "t1", "label": "TILE 1", "url": "testsrc2=size=1920x1080:rate=25" },
+    { "id": "t2", "label": "TILE 2", "url": "smptebars=size=1280x720:rate=25" },
+    { "id": "t3", "label": "TILE 3", "url": "mandelbrot=size=1280x720:rate=25" },
+    { "id": "t4", "label": "TILE 4", "url": "rgbtestsrc=size=1280x720:rate=25" }
+  ],
+  "monitors": [ { "id": "rdp-0" }, { "id": "rdp-2" } ],
+  "windows": [
+    { "id": "main", "monitor": "rdp-0", "layout": "full",
+      "panes": [ { "camera": "t1" } ] },
+    { "id": "quad", "monitor": "rdp-2", "layout": "split", "rows": 2, "cols": 2, "gap": 10,
+      "panes": [ { "id": "q1", "camera": "t1" }, { "camera": "t2" },
+                 { "camera": "t3" }, { "camera": "t4" } ] }
+  ],
+  "latency": { "probesize": 32768, "analyzeduration": 0 },
+  "placement": { "verify": true, "max_drift_px": 24 },
+  "labels": true,
+  "log_dir": "logs"
+}
