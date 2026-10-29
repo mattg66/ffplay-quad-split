@@ -28,6 +28,12 @@ reconnect problem in one stream never blocks the rest of the wall.
 - **Auto monitor detection** — monitor entries need only an `"id"`; geometry
   is read from `xrandr` at startup. Explicit geometry in the config
   overrides the live reading (handy for `--validate` on headless boxes).
+- **Monitor hot-plug** — a monitor that isn't connected doesn't stop the
+  wall: its panes are held and started automatically when it appears
+  (`xrandr` is re-polled, default every 2 s, see `monitor_poll_s`). If it
+  comes back at a different size or position, its panes are re-tiled and
+  restarted automatically. Disappearing (or a flapping) monitor stops its
+  panes instead of crash-looping.
 - **Placement verification** — after boot, each window's geometry is checked
   against the intended tile with `xprop`/`xwininfo`. If `xdotool` is present
   and enabled, a window that a WM shifted gets moved back.
@@ -114,6 +120,24 @@ Note: `config.example.json` also carries a legacy per-camera `transport` key; it
 live values. Explicit `x`/`y`/`width`/`height` always win over the live
 reading.
 
+**Behaving when a monitor is absent.** If `xrandr` doesn't report a
+configured monitor (plugged out, remote session not active, ...), the wall
+still starts: panes on that monitor are *held* — no ffplay process is spawned
+for them (log: `monitor ... absent at startup`). The poller restarts those
+panes automatically as soon as the monitor shows up in `xrandr`. On
+reconnection, geometry is re-read and the panes are re-tiled to the actual
+tile rects — *unless* the config entry pins any of `x`/`y`/`width`/`height`,
+in which case the configured values win. While a monitor is absent, a held
+pane's ffplay is also skipped by the normal crash-restart logic, so a
+flapping display (e.g. a remote desktop that drops its second monitor on
+every reconnect) produces no crash-loop. The top-level key
+`monitor_poll_s` (default `2`, minimum `1`) controls how often `xrandr` is
+re-checked.
+
+`--validate`/`--preview` for an absent monitor report a `[monitor absent]`
+tag per pane and tile with placeholder geometry (1920×1080, or the pinned
+config values) — good enough to prove the rest of the config parses.
+
 ### `windows`
 
 | key | type | default | notes |
@@ -164,6 +188,7 @@ Global defaults, overridable per camera.
 | `ffplay` | `"ffplay"` | path/binary for the ffplay executable |
 | `labels` | `true` | drawtext camera label on each pane |
 | `start_stagger_s` | 0.15 | delay between launching successive panes (avoids a connect storm) |
+| `monitor_poll_s` | 2 | how often `xrandr` is re-checked to catch monitor connect/disconnect (min 1) |
 | `log_dir` | `<config dir>/logs` | per-pane ffplay logs + label files |
 | `log_max_mb` | 5 | truncate a pane's log when it grows past this |
 | `verbose` | `false` | same as the `-v` flag, but in-file |
@@ -220,8 +245,10 @@ no autologin/panel changes are needed.
 
 ## Troubleshooting
 
-- **"monitor 'X': missing x, y, width, height"** — the id isn't found by
-  `xrandr`. Run `--print-monitors` and copy the exact id.
+- **`monitor 'X' not connected ... panes held`** — `xrandr` can't see that
+  monitor (cable, or a remote/second session that owns it). The wall runs
+  without its panes and picks them up automatically once the id shows up in
+  `xrandr`. Run `--print-monitors` to compare exact ids.
 - **Window drifts / shifted by the WM** — check `placement.use_xdotool` and
   that `xdotool` is installed; supervisor logs a `placement fixed:` line when
   it re-moves a window. Enable `override_redirect` only if your WM keeps

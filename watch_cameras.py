@@ -13,8 +13,12 @@ ffplay windows placed with "-left/-top":
 
 One process per pane means one dead camera only kills its own tile, and the
 supervisor restarts that tile (with backoff) without touching the others.
-Placement is checked after boot via xprop/xwininfo (pure Python + X utils;
-xdotool is used only if present, to fix a WM that shifted a window).
+A monitor that isn't connected doesn't stop the wall: its panes are held and
+are launched automatically as soon as it reappears (xrandr is re-polled every
+few seconds, re-tiling its panes if the monitor comes back at a new size).
+Borderless windows are positioned with ffplay's own -left/-top; placement is
+checked after boot via xprop/xwininfo (xdotool is used only if present, to
+fix a WM that shifted a window).
 
 Usage
 -----
@@ -124,25 +128,38 @@ def discover_monitors() -> list[dict]:
     return mons
 
 
-def resolve_monitors(cfg: dict) -> list[dict]:
-    """Fill monitor geometry from xrandr when a config entry doesn't supply it.
+# placeholder geometry for a configured monitor that xrandr doesn't report and
+# has no explicit size; keeps tile math working while its panes wait for it
+def _def_geom() -> dict:
+    return {"x": 0, "y": 0, "width": 1920, "height": 1080}
 
-    A monitor entry may be just {"id": "rdp-0"}; x/y/width/height are then read
+
+def resolve_monitors(cfg: dict) -> list[dict]:
+    """Resolve each configured monitor to a geometry.
+
+    An entry may be just {"id": "rdp-0"}; omitted x/y/width/height are read
     from the live display. Explicit values always win (offline / reproducible).
+    A monitor xrandr does not report is marked connected: False -- its panes
+    are held until it appears -- and gets placeholder geometry unless the
+    config pins a size.
     """
     live = {m["id"]: m for m in discover_monitors()}
     out: list[dict] = []
     for m in cfg["monitors"]:
         mid = m.get("id")
+        lm = live.get(mid)
         merged = dict(m)
+        pinned = m.get("width") is not None and m.get("height") is not None
         for k in ("x", "y", "width", "height"):
-            if merged.get(k) is None and mid in live:
-                merged[k] = live[mid][k]
-        miss = [k for k in ("id", "x", "y", "width", "height") if merged.get(k) is None]
-        if miss:
-            raise ConfigError(
-                f"monitor '{mid}': missing {', '.join(miss)} -- "
-                "omit them to auto-detect via xrandr, or run --print-monitors and paste values")
+            if merged.get(k) is None:
+                merged[k] = (lm or _def_geom())[k]
+        if lm is None:
+            log.warning("monitor '%s' not connected -- panes on it are held until it "
+                        "reappears (tiling with %s %dx%d geometry)",
+                        mid, "configured" if pinned else "placeholder", merged["width"],
+                        merged["height"])
+        merged["id"] = mid
+        merged["connected"] = lm is not None
         out.append(merged)
     return out
 
@@ -231,7 +248,9 @@ def validate_config(cfg: dict) -> list[dict]:
             args, url = build_ffplay_args(cfg, w, cam, title, x, y, tw, th,
                                           split=w.get("layout", "full") == "split")
             out.append({"window_id": w["id"], "pane_id": pid, "title": title,
-                        "monitor": mon["id"], "x": x, "y": y, "w": tw, "h": th,
+                        "monitor": mon["id"],
+                        "monitor_connected": bool(mon.get("connected", True)),
+                        "x": x, "y": y, "w": tw, "h": th,
                         "camera": cam["id"] if cam else None,
                         "url": mask_url(url), "args": args,
                         "restart": pane.get("restart", True),
@@ -406,6 +425,88 @@ def x11_move(wid: str, x: int, y: int) -> bool:
 
 # ---------------------------------------------------------------- supervisor
 
+
+def _panes_region(group: list) -> tuple[int, int, int, int]:
+    """Bounding box of a group of panes (the tiles of one monitor)."""
+    minx = min(p.d["x"] for p in group)
+    miny = min(p.d["y"] for p in group)
+    maxx = max(p.d["x"] + p.d["w"] for p in group)
+    maxy = max(p.d["y"] + p.d["h"] for p in group)
+    return minx, miny, maxx - minx, maxy - miny
+
+
+def _retile_monitor(cfg: dict, mon: dict, group: list, mid: str) -> bool:
+    """Rebuild tile rects + ffplay argv for a monitor's panes at new geometry.
+    Updates each Pane in place. Returns False if any window couldn't re-tile.
+    """
+    cams = {c["id"]: c for c in cfg["cameras"]}
+    by_win: dict[str, list] = {}
+    for p in group:
+        by_win.setdefault(p.d["window_id"], []).append(p)
+    ok = True
+    for wid, plist in by_win.items():
+        win = next((w for w in cfg["windows"] if w["id"] == wid), None)
+        if win is None:
+            continue
+        try:
+            tiles = compute_tiles(win, mon)
+        except ConfigError as e:
+            log.error("window %s on monitor %s: cannot re-tile (%s); keeping old geometry",
+                      wid, mid, e)
+            ok = False
+            continue
+        for i, p in enumerate(plist):
+            x, y, tw, th = tiles[i]
+            args, _ = build_ffplay_args(cfg, win, cams.get(p.d["camera"]), p.d["title"],
+                                        x, y, tw, th,
+                                        split=win.get("layout", "full") == "split")
+            p.d.update({"x": x, "y": y, "w": tw, "h": th, "args": args})
+            p.placed = ""
+    return ok
+
+
+def _poll_monitors(cfg: dict, mon_conn: dict, mon_panes: dict) -> None:
+    """Re-check xrandr. Stop the panes whose monitor vanished; when a monitor
+    reappears, re-tile its panes (unless its config entry pins geometry) and
+    start them again."""
+    if _x(["xrandr", "--listmonitors"]) is None:
+        return  # xrandr itself failed this round; keep the previous state
+    live = {m["id"]: m for m in discover_monitors()}
+    entries = {str(m.get("id")): m for m in cfg["monitors"]}
+    for mid, group in mon_panes.items():
+        if not group:
+            continue
+        if (mid in live) == mon_conn.get(mid, mid in live):
+            continue
+        mon_conn[mid] = mid in live
+        if not (mid in live):
+            log.warning("monitor %s disconnected -- stopping %d pane(s); "
+                        "they will restart when it reconnects", mid, len(group))
+            for p in group:
+                p.monitor_down = True
+                p.stop()
+        else:
+            lm = live[mid]
+            entry = entries.get(mid) or {}
+            pinned = any(entry.get(k) is not None for k in ("x", "y", "width", "height"))
+            if not pinned:
+                geo = _panes_region(group)
+                if (lm["x"], lm["y"], lm["width"], lm["height"]) != geo:
+                    mon = {k: lm[k] for k in ("x", "y", "width", "height")}
+                    if _retile_monitor(cfg, mon, group, mid):
+                        log.info("monitor %s is now at %d,%d %dx%d (was %d,%d %dx%d) "
+                                 "-- re-tiled its panes",
+                                 mid, lm["x"], lm["y"], lm["width"], lm["height"],
+                                 geo[0], geo[1], geo[2], geo[3])
+            log.info("monitor %s connected -- starting %d pane(s)", mid, len(group))
+            now = time.monotonic()
+            for p in group:
+                p.monitor_down = False
+                p.fails = 0
+                p.placed = ""
+                p.next_start = now
+
+
 class Pane:
     def __init__(self, desc: dict, cfg: dict):
         self.d = desc
@@ -414,6 +515,7 @@ class Pane:
         self.fails = 0
         self.next_start = 0.0
         self.started_at = 0.0
+        self.monitor_down = False   # its monitor is absent: don't spawn ffplay
         self.placed: str = ""
         self.logpath = Path(cfg.get("log_dir", "logs")) / \
             (re.sub(r"[^A-Za-z0-9._-]+", "_", f"{desc['window_id']}__{desc['pane_id']}") + ".log")
@@ -433,6 +535,17 @@ class Pane:
         log.info("  started %-28s pid=%-6d tile %d,%d %dx%d",
                  self.d["title"], self.proc.pid, self.d["x"], self.d["y"],
                  self.d["w"], self.d["h"])
+
+    def stop(self) -> None:
+        """Terminate this pane's process (if any) and clear its state."""
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        self.proc = None
+        self.placed = ""
 
     def tail(self, n: int = 8) -> str:
         try:
@@ -492,8 +605,15 @@ def run_wall(cfg: dict, panes: list[dict]) -> int:
     stag = float(cfg.get("start_stagger_s", 0.15))
     env = {**os.environ, **(cfg.get("env") or {})}
     panes_out = [Pane(d, cfg) for d in panes]
+    mon_panes: dict[str, list[Pane]] = {}
+    t0 = time.monotonic()
     for i, p in enumerate(panes_out):
-        p.next_start = i * stag
+        p.monitor_down = not p.d.get("monitor_connected", True)
+        p.next_start = t0 + i * stag
+        mon_panes.setdefault(p.d["monitor"], []).append(p)
+    mon_conn = {mid: any(not p.monitor_down for p in grp)
+                for mid, grp in mon_panes.items() if grp}
+    mon_poll = max(1.0, float(cfg.get("monitor_poll_s", 2.0)))
 
     signal.signal(signal.SIGINT, _sig)
     signal.signal(signal.SIGTERM, _sig)
@@ -507,20 +627,38 @@ def run_wall(cfg: dict, panes: list[dict]) -> int:
             log.info("  pane %-28s <- %s [%s] (%d,%d %dx%d)",
                      d["title"], d["url"], d["camera"], d["x"], d["y"], d["w"], d["h"])
 
+    for mid, grp in mon_panes.items():
+        if grp and grp[0].monitor_down:
+            log.warning("monitor %s absent at startup -- %d pane(s) held until it "
+                        "connects: %s", mid, len(grp),
+                        ", ".join(p.d["title"] for p in grp))
+
     checked: dict[str, float] = {}
-    t0 = time.monotonic()
+    next_mon_check = t0 + mon_poll
     try:
         while not _STOP:
             now = time.monotonic()
+            if now >= next_mon_check:
+                next_mon_check = now + mon_poll
+                _poll_monitors(cfg, mon_conn, mon_panes)
             for p in panes_out:
                 if p.proc is None:
-                    if now >= p.next_start:
+                    if not p.monitor_down and now >= p.next_start:
                         p.start(env)
                 elif p.proc.poll() is not None:
                     code = p.proc.returncode
                     if time.monotonic() - p.started_at > 30:
                         p.fails = 0
                     p.proc = None
+                    if not mon_conn.get(p.d["monitor"], True):
+                        # the monitor's display is gone; hold until it returns
+                        p.monitor_down = True
+                        p.fails = 0
+                        p.next_start = now
+                        log.warning("pane %s died and its monitor %s is absent -- "
+                                    "holding until it reconnects",
+                                    p.d["title"], p.d["monitor"])
+                        continue
                     p.fails += 1
                     backoff = min(15.0, 1.5 ** p.fails) if p.d.get("restart", True) else 1e18
                     p.next_start = now + backoff
@@ -533,7 +671,7 @@ def run_wall(cfg: dict, panes: list[dict]) -> int:
             # placement checks, throttled per pane
             if verify:
                 for p in panes_out:
-                    if p.proc is None or p.proc.poll() is not None:
+                    if p.monitor_down or p.proc is None or p.proc.poll() is not None:
                         continue
                     if p.placed and p.placed not in ("ok", "fixed"):
                         continue
@@ -550,14 +688,7 @@ def run_wall(cfg: dict, panes: list[dict]) -> int:
     finally:
         log.info("stopping...")
         for p in panes_out:
-            if p.proc is not None and p.proc.poll() is None:
-                p.proc.terminate()
-        for p in panes_out:
-            if p.proc is not None and p.proc.poll() is None:
-                try:
-                    p.proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    p.proc.kill()
+            p.stop()
         log.info("all panes stopped")
     return 0
 
@@ -605,10 +736,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     nwin = len({d['window_id'] for d in panes})
-    print(f"config OK: {len(panes)} pane(s), {nwin} window(s)")
+    nwait = sum(1 for d in panes if not d.get("monitor_connected", True))
+    print(f"config OK: {len(panes)} pane(s), {nwin} window(s)"
+          + (f", {nwait} waiting for an absent monitor" if nwait else ""))
     for d in panes:
+        absent = "  [monitor absent]" if not d.get("monitor_connected", True) else ""
         print(f"  [{d['window_id']}/{d['pane_id']}] mon={d['monitor']} "
-              f"cam={d['camera'] or '-':<12} ({d['x']},{d['y']}) {d['w']}x{d['h']}  {d['url'][:60]}")
+              f"cam={d['camera'] or '-':<12} ({d['x']},{d['y']}) {d['w']}x{d['h']}{absent}"
+              f"  {d['url'][:60]}")
 
     if args.validate:
         return 0
