@@ -173,11 +173,50 @@ Global defaults, overridable per camera.
 
 ```
 watch_cameras.py       the whole tool (config parser + supervisor)
+install_service.sh     installs the tool as a systemd service started when
+                       the LXDE/X11 session is ready
 config.example.json    annotated example config (safe to commit)
 config.smoke.json      small smoke-test config
 config.json            your real config (git-ignored, has credentials)
 logs/                  per-pane ffplay logs + label .txt files (git-ignored)
 ```
+
+## Running as a service (starts with the LXDE session)
+
+`install_service.sh` installs the wall as a systemd system service that
+starts on boot **once the LXDE desktop / X11 display is actually ready** (it
+polls for a display that answers `xrandr`, then execs the supervisor as your
+login user using that session's `XAUTHORITY`. If the display isn't up yet
+within the wait budget it exits and systemd retries every ~10 s, so the wall
+appears as soon as LXDE is on screen).
+
+```sh
+sudo ./install_service.sh           # install + enable (systemd units only)
+sudo ./install_service.sh start     # install + start now (waits for the display)
+sudo ./install_service.sh uninstall # stop, disable, remove
+```
+
+Tunables at install time: `RUN_USER=pi`, `WAIT_TIMEOUT_S=300`,
+`WAIT_POLL_S=2`, `PYTHON=/usr/bin/python3`.
+
+It writes (and regenerates on every install):
+
+- `/etc/systemd/system/watch-cameras-wait.sh` — display-readiness wait loop
+- `/etc/systemd/system/watch-cameras.service` — unit (runs as the session
+  user, `Restart=on-failure`, `WantedBy=multi-user.target`)
+
+Useful afterwards:
+
+```sh
+systemctl status|start|stop|disable watch-cameras
+journalctl -u watch-cameras -f          # wait wrapper + unit output
+tail -f logs/service.out.log            # supervisor + ffplay stdout/stderr
+```
+
+Notes: the config path is baked into the generated files at install time, so
+re-run `sudo ./install_service.sh` after moving the project or switching
+configs. The service enables itself for boot (`WantedBy=multi-user.target`);
+no autologin/panel changes are needed.
 
 ## Troubleshooting
 
