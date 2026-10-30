@@ -70,7 +70,6 @@
     "wallclock_ts": true,
     "probesize": 32768,
     "analyzeduration": 0,
-    "thread_type": "slice",
     "framedrop": true,
     "hardware_decoders": ["auto"]
   },

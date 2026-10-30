@@ -321,8 +321,6 @@ def rtsp_latency_args(cfg: dict, cam: dict) -> list[str]:
     # skip network probing (no IDR-waiting) at stream start
     a += ["-probesize", str(int(ll.get("probesize", 32768)))]
     a += ["-analyzeduration", str(int(ll.get("analyzeduration", 0)))]
-    # slice threading: decode one whole frame in parallel -> lowest per-frame CPU time
-    a += ["-thread_type", str(ll.get("thread_type", "slice"))]
     if ll.get("framedrop", True):
         a += ["-framedrop", "-infbuf", "-max_delay", "0"]
     # in-stream reconnect (ffplay experimental): ride out brief network glitches
