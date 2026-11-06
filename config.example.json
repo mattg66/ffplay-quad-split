@@ -81,4 +81,8 @@
   "verbose": false,
   "hwdec": "vaapi",
   "env": {}
+
+  // If you experience latency issues or crashes with hardware acceleration,
+  // try setting hwdec to false:
+  // "hwdec": false
 }

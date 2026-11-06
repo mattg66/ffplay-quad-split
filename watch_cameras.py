@@ -286,11 +286,20 @@ def build_player_args(cfg: dict, win: dict, cam: dict | None, title: str,
         args += ["--no-input-cursor"]
         # Use low-latency profile
         args += ["--profile=low-latency"]
-        # Enable hardware acceleration if configured
-        if cfg.get("hwdec", True):
-            hwdec = cfg.get("hwdec")
-            if hwdec:
-                args += ["--hwdec=" + hwdec]
+        
+        # For multiple streams, disable hardware decoding to prevent VA-API conflicts
+        hwdec_enabled = cfg.get("hwdec", True)
+        if hwdec_enabled:
+            hwdev = cfg.get("hwdev")
+            # Disable hardware decoding for multiple streams on VA-API systems
+            if len(cfg["cameras"]) > 1 and hwdev == "vaapi":
+                log.info("Disabling hardware decoding for multiple streams to prevent VA-API conflicts")
+                args += ["--hwdec=auto"]  # This will effectively disable hardware decoding
+            elif hwdev and hwdev != "vaapi":
+                args += ["--hwdec=" + hwdev]
+            elif hwdev == "vaapi":
+                # For single stream, we can enable VA-API if configured
+                args += ["--hwdec=vaapi"]
             else:
                 args += ["--hwdec=auto"]
         
@@ -350,12 +359,21 @@ def rtsp_latency_args(cfg: dict, cam: dict) -> list[str]:
     """Simple default options for RTSP streams."""
     # Simple default flags to reduce CPU usage
     a: list[str] = []
-    a += ["--rtsp-transport", "tcp"]
-    # Basic settings to reduce CPU load
-    a += ["--fflags", "nobuffer"]
-    a += ["--flags", "low_delay"]
-    a += ["--demuxer-lavf-probesize", "32"]
-    a += ["--demuxer-lavf-analyzeduration", "0"]
+    # For multiple streams, use more aggressive settings to prevent conflicts
+    if len(cfg["cameras"]) > 1:
+        a += ["--rtsp-transport", "tcp"]
+        # More aggressive settings for multiple streams to reduce CPU load
+        a += ["--fflags", "nobuffer"]
+        a += ["--flags", "low_delay"]
+        a += ["--demuxer-lavf-probesize", "32"]
+        a += ["--demuxer-lavf-analyzeduration", "0"]
+    else:
+        a += ["--rtsp-transport", "tcp"]
+        # Basic settings to reduce CPU load
+        a += ["--fflags", "nobuffer"]
+        a += ["--flags", "low_delay"]
+        a += ["--demuxer-lavf-probesize", "32"]
+        a += ["--demuxer-lavf-analyzeduration", "0"]
     return a
 
 
