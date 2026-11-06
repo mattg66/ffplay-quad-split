@@ -271,31 +271,32 @@ def build_player_args(cfg: dict, win: dict, cam: dict | None, title: str,
     # Build args based on player type
     if player == "mpv":
         args: list[str] = [str(cfg.get("player", "mpv")), "--no-border"]
-        args += ["--log-level=info"]
-        if cfg.get("verbose"):
-            args += ["--log-level=verbose"]
         
         # MPV positioning
         args += ["--geometry=" + f"{w}x{h}+{x}+{y}"]
-        args += ["--title", title]
+        # Remove --title parameter as it may cause parsing issues in MPV
         if cfg["placement"].get("alwaysontop"):
             args += ["--ontop"]
         
-        # MPV specific options
-        args += ["--no-audio", "--no-sub"]
+        # MPV specific options - keep it simple and avoid video processing that causes crashes
+        args += ["--no-audio"]
+        # Disable all OSD features completely for MPV to prevent overlay behavior
+        args += ["--osd-level=0"]
+        # Disable input cursor/hover OSD
+        args += ["--no-input-cursor"]
+        
+        # Remove problematic video output options that might cause crashes
         args += [str(a) for a in (win.get("global_extra") or [])]
         
         if cam is not None and scheme in RTSP_SCHEMES:
-            args += rtsp_latency_args(cfg, cam)
+            # Keep MPV settings minimal
+            args += ["--rtsp-transport=tcp"]
             url += rtsp_url_options(cfg, cam)
         if cam is not None and not scheme.startswith(("rtsp",)) and "://" not in url:
-            args += ["--demuxer-lavf-format", "lavfi"]
+            args += ["--demuxer-lavf-format=lavfi"]
         if cam is not None:
             args += [str(a) for a in (cam.get("input_extra") or [])]
         args += ["--", url]
-
-        # Video filters for mpv - simplified approach without complex filters
-        # Skip video filters entirely to prevent MPV crashes in headless environments
     else:
         # FFPlay defaults
         args: list[str] = [str(cfg.get("ffplay", "ffplay")), "-hide_banner"]
@@ -310,6 +311,7 @@ def build_player_args(cfg: dict, win: dict, cam: dict | None, title: str,
         args += [str(a) for a in (win.get("global_extra") or [])]
 
         if cam is not None and scheme in RTSP_SCHEMES:
+            # Use MPV-specific RTSP settings
             args += rtsp_latency_args(cfg, cam)
             url += rtsp_url_options(cfg, cam)
         if cam is not None and not scheme.startswith(("rtsp",)) and "://" not in url:
@@ -339,12 +341,12 @@ def rtsp_latency_args(cfg: dict, cam: dict) -> list[str]:
     """Simple default options for RTSP streams."""
     # Simple default flags to reduce CPU usage
     a: list[str] = []
-    a += ["-rtsp_transport", "tcp"]
+    a += ["--rtsp-transport", "tcp"]
     # Basic settings to reduce CPU load
-    a += ["-fflags", "nobuffer"]
-    a += ["-flags", "low_delay"]
-    a += ["-probesize", "32"]
-    a += ["-analyzeduration", "0"]
+    a += ["--fflags", "nobuffer"]
+    a += ["--flags", "low_delay"]
+    a += ["--demuxer-lavf-probesize", "32"]
+    a += ["--demuxer-lavf-analyzeduration", "0"]
     return a
 
 
