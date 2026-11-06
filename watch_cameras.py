@@ -245,7 +245,7 @@ def validate_config(cfg: dict) -> list[dict]:
                 if cam is None:
                     raise ConfigError(f"window '{w['id']}' pane '{pid}': "
                                       f"unknown camera '{cid}'")
-            args, url = build_ffplay_args(cfg, w, cam, title, x, y, tw, th,
+            args, url = build_player_args(cfg, w, cam, title, x, y, tw, th,
                                           split=w.get("layout", "full") == "split")
             out.append({"window_id": w["id"], "pane_id": pid, "title": title,
                         "monitor": mon["id"],
@@ -254,52 +254,84 @@ def validate_config(cfg: dict) -> list[dict]:
                         "camera": cam["id"] if cam else None,
                         "url": mask_url(url), "args": args,
                         "restart": pane.get("restart", True),
-                        "ffplay": cfg.get("ffplay", "ffplay")})
+                        "player": cfg.get("player", "ffplay")})
     return out
 
 
-def build_ffplay_args(cfg: dict, win: dict, cam: dict | None, title: str,
+def build_player_args(cfg: dict, win: dict, cam: dict | None, title: str,
                       x: int, y: int, w: int, h: int,
                       split: bool = False) -> tuple[list[str], str]:
+    player = cfg.get("player", "ffplay")
     if cam is None:
         url = f"color=black:size={w}x{h}:rate=15"
     else:
         url = build_url(cam)
     scheme = urlparse(url).scheme.lower()
 
-    args: list[str] = [str(cfg.get("ffplay", "ffplay")), "-hide_banner"]
-    args += ["-loglevel", "verbose" if cfg.get("verbose") else "info"]
-    args += ["-sn", "-an", "-nostats", "-noborder"]
-    if cfg["placement"].get("override_redirect"):
-        args += ["-n"]
-    args += ["-left", str(int(x)), "-top", str(int(y))]
-    if cfg["placement"].get("alwaysontop"):
-        args += ["-alwaysontop"]
-    args += ["-window_title", title]
-    args += [str(a) for a in (win.get("global_extra") or [])]
+    # Build args based on player type
+    if player == "mpv":
+        args: list[str] = [str(cfg.get("player", "mpv")), "--no-border"]
+        args += ["--log-level=info"]
+        if cfg.get("verbose"):
+            args += ["--log-level=verbose"]
+        
+        # MPV positioning
+        args += ["--geometry=" + f"{w}x{h}+{x}+{y}"]
+        args += ["--title", title]
+        if cfg["placement"].get("alwaysontop"):
+            args += ["--ontop"]
+        
+        # MPV specific options
+        args += ["--no-audio", "--no-sub"]
+        args += [str(a) for a in (win.get("global_extra") or [])]
+        
+        if cam is not None and scheme in RTSP_SCHEMES:
+            args += rtsp_latency_args(cfg, cam)
+            url += rtsp_url_options(cfg, cam)
+        if cam is not None and not scheme.startswith(("rtsp",)) and "://" not in url:
+            args += ["--demuxer-lavf-format", "lavfi"]
+        if cam is not None:
+            args += [str(a) for a in (cam.get("input_extra") or [])]
+        args += ["--", url]
 
-    if cam is not None and scheme in RTSP_SCHEMES:
-        args += rtsp_latency_args(cfg, cam)
-        url += rtsp_url_options(cfg, cam)
-    if cam is not None and not scheme.startswith(("rtsp",)) and "://" not in url:
-        args += ["-f", "lavfi"]
-    if cam is not None:
-        args += [str(a) for a in (cam.get("input_extra") or [])]
-    args += ["-i", url]
+        # Video filters for mpv - simplified approach without complex filters
+        # Skip video filters entirely to prevent MPV crashes in headless environments
+    else:
+        # FFPlay defaults
+        args: list[str] = [str(cfg.get("ffplay", "ffplay")), "-hide_banner"]
+        args += ["-loglevel", "verbose" if cfg.get("verbose") else "info"]
+        args += ["-sn", "-an", "-nostats", "-noborder"]
+        if cfg["placement"].get("override_redirect"):
+            args += ["-n"]
+        args += ["-left", str(int(x)), "-top", str(int(y))]
+        if cfg["placement"].get("alwaysontop"):
+            args += ["-alwaysontop"]
+        args += ["-window_title", title]
+        args += [str(a) for a in (win.get("global_extra") or [])]
 
-    vf: list[str] = []
-    # Fit the camera into the tile, letterbox (no stretch), square pixels.
-    # Tile dims are even (see compute_tiles) so the scaled fit always fits in
-    # pad's target.
-    vf.append(f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos")
-    vf.append(f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black")
-    vf.append("setsar=1")
-    if cfg.get("labels", True) and cam is not None:
-        lf = label_file(cfg, title, cam.get("label", cam["id"]))
-        vf.append(
-            f"drawtext=fontfile={font_path()}:textfile={lf}:fontsize={max(18, h // 20)}:"
-            "fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=10:x=20:y=20")
-    args += ["-vf", ",".join(vf)]
+        if cam is not None and scheme in RTSP_SCHEMES:
+            args += rtsp_latency_args(cfg, cam)
+            url += rtsp_url_options(cfg, cam)
+        if cam is not None and not scheme.startswith(("rtsp",)) and "://" not in url:
+            args += ["-f", "lavfi"]
+        if cam is not None:
+            args += [str(a) for a in (cam.get("input_extra") or [])]
+        args += ["-i", url]
+
+        # Video filters for ffplay
+        vf: list[str] = []
+        # Fit the camera into the tile, letterbox (no stretch), square pixels.
+        # Tile dims are even (see compute_tiles) so the scaled fit always fits in
+        # pad's target.
+        vf.append(f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos")
+        vf.append(f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black")
+        vf.append("setsar=1")
+        if cfg.get("labels", True) and cam is not None:
+            lf = label_file(cfg, title, cam.get("label", cam["id"]))
+            vf.append(
+                f"drawtext=fontfile={font_path()}:textfile={lf}:fontsize={max(18, h // 20)}:"
+                "fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=10:x=20:y=20")
+        args += ["-vf", ",".join(vf)]
     return args, url
 
 
@@ -692,10 +724,10 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-c", "--config", default="config.example.json", help="JSON config file")
     ap.add_argument("--validate", action="store_true", help="check config, print pane grid, exit")
-    ap.add_argument("--preview", action="store_true", help="print the exact ffplay command per pane, exit")
+    ap.add_argument("--preview", action="store_true", help="print the exact player command per pane, exit")
     ap.add_argument("--print-monitors", action="store_true", help="list displays from xrandr and exit")
     ap.add_argument("--dry-run", action="store_true", help="alias for --preview")
-    ap.add_argument("-v", "--verbose", action="store_true", help="run ffplay with -v (loglevel verbose)")
+    ap.add_argument("-v", "--verbose", action="store_true", help="run player with -v (loglevel verbose)")
     ap.add_argument("--log-level", default="INFO", help="launcher log level (DEBUG/INFO/WARNING)")
     args = ap.parse_args(argv)
 
