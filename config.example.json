@@ -79,5 +79,6 @@
   "log_dir": "logs",
   "log_max_mb": 5,
   "verbose": false,
+  "hwdec": "vaapi",
   "env": {}
 }

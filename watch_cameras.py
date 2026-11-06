@@ -284,6 +284,15 @@ def build_player_args(cfg: dict, win: dict, cam: dict | None, title: str,
         args += ["--osd-level=0"]
         # Disable input cursor/hover OSD
         args += ["--no-input-cursor"]
+        # Use low-latency profile
+        args += ["--profile=low-latency"]
+        # Enable hardware acceleration if configured
+        if cfg.get("hwdec", True):
+            hwdec = cfg.get("hwdec")
+            if hwdec:
+                args += ["--hwdec=" + hwdec]
+            else:
+                args += ["--hwdec=auto"]
         
         # Remove problematic video output options that might cause crashes
         args += [str(a) for a in (win.get("global_extra") or [])]

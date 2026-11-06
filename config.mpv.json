@@ -80,5 +80,7 @@
   "log_max_mb": 5,
   "verbose": false,
   "player": "mpv",
+  "hwdec": true,
+  "hwdev": null,
   "env": {}
 }
