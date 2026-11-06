@@ -21,31 +21,9 @@ reconnect problem in one stream never blocks the rest of the wall.
 - **Tile isolation & auto-restart** — each pane is its own ffplay process;
   crashes are retried with exponential backoff (capped at 15 s), resets after
   30 s of stable running.
-- **Low-latency RTSP defaults** — `tcp` transport, `nobuffer`, `low_delay`,
-  `discardcorrupt`, small `probesize`/`analyzeduration`, slice threading,
-  optional frame drop + `-infbuf`, and optional in-stream reconnect.
-  Per-camera overrides on top of the global `latency` block.
-- **Auto monitor detection** — monitor entries need only an `"id"`; geometry
-  is read from `xrandr` at startup. Explicit geometry in the config
-  overrides the live reading (handy for `--validate` on headless boxes).
-- **Monitor hot-plug** — a monitor that isn't connected doesn't stop the
-  wall: its panes are held and started automatically when it appears
-  (`xrandr` is re-polled, default every 2 s, see `monitor_poll_s`). If it
-  comes back at a different size or position, its panes are re-tiled and
-  restarted automatically. Disappearing (or a flapping) monitor stops its
-  panes instead of crash-looping.
-- **Placement verification** — after boot, each window's geometry is checked
-  against the intended tile with `xprop`/`xwininfo`. If `xdotool` is present
-  and enabled, a window that a WM shifted gets moved back.
-- **Pane labels** — optional `drawtext` overlay (camera label in top-left)
-  rendered via a per-pane label file.
-- **Blank tiles** — a `split` window with fewer panes than `rows*cols` fills
-  the rest with black (`color=black` lavfi sources).
-- **Per-pane logging** — each ffpane writes to `./logs/<window>__<pane>.log`,
-  auto-truncated when it exceeds `log_max_mb`.
-- **Credentials handled safely** — `username`/`password` are percent-encoded
-  into the RTSP URL (special chars like `?` or `:` in passwords work), and
-  are masked as `***` in logs and `--preview` output.
+- **Simplified RTSP defaults** — `tcp` transport, `nobuffer`, `low_delay`,
+  small `probesize`/`analyzeduration` to reduce CPU usage. Per-camera overrides
+  on top of the global `latency` block.
 
 ## Requirements
 
@@ -159,17 +137,9 @@ Global defaults, overridable per camera.
 
 | key | default | notes |
 |---|---|---|
-| `rtsp_transport` | `"tcp"` | `tcp` (low reordering, higher delay) or `udp` |
-| `connect_timeout_ms` | 1000 | TCP connect timeout |
-| `io_timeout_ms` | — | SO timeouts over the stream (`stimeout` URL param) |
-| `keepalive` | `false` | adds `rtsp_flags=keepalive` to the URL |
-| `wallclock_ts` | `true` | `-use_wallclock_as_timestamps 1` |
-| `probesize` | 32768 | bytes probed before first frame |
+| `rtsp_transport` | "tcp" | `tcp` (low reordering, higher delay) or `udp` |
+| `probesize` | 32 | bytes probed before first frame |
 | `analyzeduration` | 0 | — |
-| `thread_type` | `"slice"` | decodes one frame in parallel; lowest per-frame CPU time |
-| `framedrop` | `true` | adds `-framedrop -infbuf -max_delay 0` |
-| `reconnect_delay_max_s` | 0 | >0 enables ffmpeg's in-stream RTSP reconnect for brief glitches |
-| `hardware_decoders` | `[]` | list for repeated `-hwaccel` (e.g. `["vaapi", "auto"]`); `"auto"` alone lets ffplay auto-detect |
 
 ### `placement`
 
@@ -260,7 +230,7 @@ no autologin/panel changes are needed.
   (tile sizes are floored to even numbers); if you see it, make sure your
   monitor geometry in the config matches the live display.
 - **No labels drawn** — install `fonts-dejavu-core` (or `fonts-liberation`),
-  or set `"labels": false`.
+  or set `"labels": false.
 
 ## Notes
 

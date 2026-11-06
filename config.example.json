@@ -63,15 +63,7 @@
   ],
 
   "latency": {
-    "rtsp_transport": "tcp",
-    "connect_timeout_ms": 1000,
-    "io_timeout_ms": 15000,
-    "keepalive": false,
-    "wallclock_ts": true,
-    "probesize": 32768,
-    "analyzeduration": 0,
-    "framedrop": true,
-    "hardware_decoders": ["auto"]
+    "rtsp_transport": "tcp"
   },
 
   "placement": {

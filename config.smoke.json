@@ -13,7 +13,7 @@
       "panes": [ { "id": "q1", "camera": "t1" }, { "camera": "t2" },
                  { "camera": "t3" }, { "camera": "t4" } ] }
   ],
-  "latency": { "probesize": 32768, "analyzeduration": 0 },
+  "latency": {},
   "placement": { "verify": true, "max_drift_px": 24 },
   "labels": true,
   "log_dir": "logs"

@@ -304,32 +304,15 @@ def build_ffplay_args(cfg: dict, win: dict, cam: dict | None, title: str,
 
 
 def rtsp_latency_args(cfg: dict, cam: dict) -> list[str]:
-    """Low-latency global options (must come before -i), plus per-pane tweaks."""
-    ll = dict(cfg.get("latency") or {})
-    if isinstance(cam.get("latency"), dict):
-        ll.update({k: v for k, v in cam["latency"].items() if v is not None})
-
+    """Simple default options for RTSP streams."""
+    # Simple default flags to reduce CPU usage
     a: list[str] = []
-    a += ["-rtsp_transport", str(ll.get("rtsp_transport", "tcp"))]
-    # fast connect: small TCP connect timeout (microseconds for ffmpeg's -timeout)
-    a += ["-timeout", str(int(ll.get("connect_timeout_ms", 1000) * 1000))]
-    # decoder / demuxer: no buffering, discard anything damaged on arrival
-    a += ["-fflags", "+genpts+discardcorrupt+nobuffer"]
+    a += ["-rtsp_transport", "tcp"]
+    # Basic settings to reduce CPU load
+    a += ["-fflags", "nobuffer"]
     a += ["-flags", "low_delay"]
-    if ll.get("wallclock_ts", True):
-        a += ["-use_wallclock_as_timestamps", "1"]
-    # skip network probing (no IDR-waiting) at stream start
-    a += ["-probesize", str(int(ll.get("probesize", 32768)))]
-    a += ["-analyzeduration", str(int(ll.get("analyzeduration", 0)))]
-    if ll.get("framedrop", True):
-        a += ["-framedrop", "-infbuf", "-max_delay", "0"]
-    # in-stream reconnect (ffplay experimental): ride out brief network glitches
-    if ll.get("reconnect_delay_max_s") and int(ll.get("reconnect_delay_max_s", 0)) > 0:
-        a += ["-reconnect", "1", "-reconnect_streamed", "1",
-              "-reconnect_delay_max", str(int(ll["reconnect_delay_max_s"]))]
-    devs = ll.get("hardware_decoders") or []
-    for d in devs:
-        a += ["-hwaccel", str(d)]
+    a += ["-probesize", "32"]
+    a += ["-analyzeduration", "0"]
     return a
 
 
