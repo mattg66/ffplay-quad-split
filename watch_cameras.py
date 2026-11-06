@@ -270,11 +270,10 @@ def build_player_args(cfg: dict, win: dict, cam: dict | None, title: str,
 
     # Build args based on player type
     if player == "mpv":
-        args: list[str] = [str(cfg.get("player", "mpv")), "--no-border"]
+        args: list[str] = [str(cfg.get("player", "mpv"))]
         
-        # MPV positioning
+        # MPV positioning - use --geometry for positioning
         args += ["--geometry=" + f"{w}x{h}+{x}+{y}"]
-        # Remove --title parameter as it may cause parsing issues in MPV
         if cfg["placement"].get("alwaysontop"):
             args += ["--ontop"]
         
@@ -289,19 +288,13 @@ def build_player_args(cfg: dict, win: dict, cam: dict | None, title: str,
         
         # For multiple streams, disable hardware decoding to prevent VA-API conflicts
         hwdec_enabled = cfg.get("hwdec", True)
-        if hwdec_enabled:
-            hwdev = cfg.get("hwdev")
-            # Disable hardware decoding for multiple streams on VA-API systems
-            if len(cfg["cameras"]) > 1 and hwdev == "vaapi":
-                log.info("Disabling hardware decoding for multiple streams to prevent VA-API conflicts")
-                args += ["--hwdec=auto"]  # This will effectively disable hardware decoding
-            elif hwdev and hwdev != "vaapi":
-                args += ["--hwdec=" + hwdev]
-            elif hwdev == "vaapi":
-                # For single stream, we can enable VA-API if configured
-                args += ["--hwdec=vaapi"]
-            else:
-                args += ["--hwdec=auto"]
+        if not hwdec_enabled:
+            args += ["--hwdec=auto"]  # This will effectively disable hardware decoding
+        elif hwdec_enabled and cfg.get("hwdev") == "vaapi" and len(cfg["cameras"]) <= 1:
+            # For single stream with VA-API, enable it
+            args += ["--hwdec=vaapi"]
+        else:
+            args += ["--hwdec=auto"]
         
         # Remove problematic video output options that might cause crashes
         args += [str(a) for a in (win.get("global_extra") or [])]
@@ -317,7 +310,7 @@ def build_player_args(cfg: dict, win: dict, cam: dict | None, title: str,
         args += ["--", url]
     else:
         # FFPlay defaults
-        args: list[str] = [str(cfg.get("ffplay", "ffplay")), "-hide_banner"]
+        args: list[str] = [str(cfg.get("player", "ffplay")), "-hide_banner"]
         args += ["-loglevel", "verbose" if cfg.get("verbose") else "info"]
         args += ["-sn", "-an", "-nostats", "-noborder"]
         if cfg["placement"].get("override_redirect"):
@@ -329,7 +322,7 @@ def build_player_args(cfg: dict, win: dict, cam: dict | None, title: str,
         args += [str(a) for a in (win.get("global_extra") or [])]
 
         if cam is not None and scheme in RTSP_SCHEMES:
-            # Use MPV-specific RTSP settings
+            # Use RTSP settings for ffplay
             args += rtsp_latency_args(cfg, cam)
             url += rtsp_url_options(cfg, cam)
         if cam is not None and not scheme.startswith(("rtsp",)) and "://" not in url:
@@ -359,21 +352,13 @@ def rtsp_latency_args(cfg: dict, cam: dict) -> list[str]:
     """Simple default options for RTSP streams."""
     # Simple default flags to reduce CPU usage
     a: list[str] = []
-    # For multiple streams, use more aggressive settings to prevent conflicts
-    if len(cfg["cameras"]) > 1:
-        a += ["--rtsp-transport", "tcp"]
-        # More aggressive settings for multiple streams to reduce CPU load
-        a += ["--fflags", "nobuffer"]
-        a += ["--flags", "low_delay"]
-        a += ["--demuxer-lavf-probesize", "32"]
-        a += ["--demuxer-lavf-analyzeduration", "0"]
-    else:
-        a += ["--rtsp-transport", "tcp"]
-        # Basic settings to reduce CPU load
-        a += ["--fflags", "nobuffer"]
-        a += ["--flags", "low_delay"]
-        a += ["--demuxer-lavf-probesize", "32"]
-        a += ["--demuxer-lavf-analyzeduration", "0"]
+    # For ffplay, we only use ffplay-specific arguments
+    a += ["-rtsp_transport", "tcp"]
+    # Basic settings to reduce CPU load
+    a += ["-fflags", "nobuffer"]
+    a += ["-flags", "low_delay"]
+    a += ["-probesize", "32"]
+    a += ["-analyzeduration", "0"]
     return a
 
 
